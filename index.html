@@ -2045,8 +2045,34 @@ document.getElementById('finalScreen').addEventListener('click', () => {
         // Init Codicent
         try { window.Codicent && window.Codicent.init({ token, maxConnectionAttempts: 3 }); } catch(e){ /* ignore init errors here */ }
         const message = prepareMessageContent();
-        const id = await (window.Codicent && window.Codicent.postMessage ? window.Codicent.postMessage({ message }) : Promise.reject(new Error('CodicentJS not loaded')));
-        if (statusDiv){ statusDiv.style.display='block'; statusDiv.style.color='green'; statusDiv.textContent = (messagesInterface?.[currentLang]?.codicentSuccessPrefix || 'Sent to Codicent: ') + id; }
+        // Try Codicent JS bridge first, otherwise POST the payload to a fallback endpoint
+        let id;
+        if (window.Codicent && typeof window.Codicent.postMessage === 'function'){
+          // Native Codicent bridge (preserves original behaviour)
+          id = await window.Codicent.postMessage({ message });
+          if (statusDiv){ statusDiv.style.display='block'; statusDiv.style.color='green'; statusDiv.textContent = (messagesInterface?.[currentLang]?.codicentSuccessPrefix || 'Sent to Codicent: ') + id; }
+        } else {
+          // Fallback: do a proper HTTP POST with JSON body.
+          // postUrl can be supplied as a query parameter (?postUrl=...), otherwise we post to /codicent on the same origin.
+          try{
+            const qs = new URLSearchParams(location.search);
+            const postUrl = qs.get('postUrl') || (location.origin + '/codicent');
+            const token = getCodicentToken();
+            const res = await fetch(postUrl, {
+              method: 'POST',
+              headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { 'Authorization': 'Bearer ' + token } : {}),
+              body: JSON.stringify({ message })
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + res.statusText);
+            // Try to parse JSON response to get an id, otherwise provide a simple status string
+            let body = null;
+            try{ body = await res.json(); }catch(_){ /* ignore parse errors */ }
+            id = (body && (body.id || body.messageId || body.result)) || ('status:' + res.status);
+            if (statusDiv){ statusDiv.style.display='block'; statusDiv.style.color='green'; statusDiv.textContent = (messagesInterface?.[currentLang]?.codicentSuccessPrefix || 'Sent to Codicent: ') + id; }
+          }catch(err){
+            throw err;
+          }
+        }
       }catch(e){
         if (statusDiv){ statusDiv.style.display='block'; statusDiv.style.color='red'; statusDiv.textContent = (messagesInterface?.[currentLang]?.codicentErrorPrefix || 'Error: ') + (e?.message || e); }
       }
